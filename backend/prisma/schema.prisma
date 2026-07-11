@@ -1,0 +1,138 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  BUYER
+  TALENT
+  AGENT
+  ADMIN
+}
+
+enum BookingStatus {
+  PENDING_REVIEW
+  OFFER_PENDING
+  OFFER_REJECTED
+  NEGOTIATING
+  NDA_PENDING
+  NDA_SIGNED
+  CONTRACT_PENDING
+  CONTRACT_SIGNED
+  AWAITING_DEPOSIT
+  CONFIRMED
+  COMPLETED
+}
+
+enum TransactionType {
+  DEPOSIT
+  FINAL_PAYMENT
+  COMMISSION
+  WITHHOLDING
+  PAYOUT
+}
+
+enum TransactionStatus {
+  PENDING
+  CLEARED
+  FAILED
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      Role     @default(BUYER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  bookingsAsBuyer    Booking[]            @relation("BuyerBookings")
+  bookingsAsTalent   Booking[]            @relation("TalentBookings")
+  bookingsAsAgent    Booking[]            @relation("AgentBookings")
+  signedContracts    Contract[]
+  ledgers            FinancialLedger[]
+}
+
+model Booking {
+  id                String        @id @default(uuid())
+  status            BookingStatus @default(PENDING_REVIEW)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Client / Talent info
+  buyerId           String
+  buyer             User          @relation("BuyerBookings", fields: [buyerId], references: [id])
+  talentId          String
+  talent            User          @relation("TalentBookings", fields: [talentId], references: [id])
+  agentId           String?
+  agent             User?         @relation("AgentBookings", fields: [agentId], references: [id])
+
+  // Core Event Details
+  eventTitle        String
+  eventDate         DateTime
+  venueName         String
+  venueCapacity     Int
+  guaranteedBudget  Decimal       @db.Decimal(12, 2)
+  usageRights       String
+  radiusExclusivity String?
+  hospitalityRider  String?       @default("v1.0")
+  technicalRider    String?       @default("v1.0")
+
+  // Flows
+  contracts         Contract[]
+  transactions      FinancialTransaction[]
+  ledgerEntries     FinancialLedger[]
+}
+
+model Contract {
+  id              String   @id @default(uuid())
+  bookingId       String
+  booking         Booking  @relation(fields: [bookingId], references: [id])
+  signerId        String
+  signer          User     @relation(fields: [signerId], references: [id])
+  contractType    String   // "NDA" or "LONG_FORM"
+  documentUrl     String
+  isSigned        Boolean  @default(false)
+  signedAt        DateTime?
+  lockExpiration  DateTime? // 48-Hour Lock rule indicator
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model FinancialTransaction {
+  id          String            @id @default(uuid())
+  bookingId   String
+  booking     Booking           @relation(fields: [bookingId], references: [id])
+  type        TransactionType
+  amount      Decimal           @db.Decimal(12, 2)
+  status      TransactionStatus @default(PENDING)
+  reference   String?           // bank transfer wire reference, Stripe checkout session ID
+  clearedAt   DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model FinancialLedger {
+  id               String   @id @default(uuid())
+  bookingId        String
+  booking          Booking  @relation(fields: [bookingId], references: [id])
+  talentId         String
+  talent           User     @relation(fields: [talentId], references: [id])
+  grossEarnings    Decimal  @db.Decimal(12, 2)
+  agencyCommission Decimal  @db.Decimal(12, 2)
+  taxWithholding   Decimal  @db.Decimal(12, 2)
+  netPayout        Decimal  @db.Decimal(12, 2)
+  payoutStatus     String   @default("AWAITING_CLEARANCE") // "AWAITING_CLEARANCE", "PAID"
+  payoutDate       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
