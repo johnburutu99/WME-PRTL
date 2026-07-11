@@ -9,8 +9,11 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { PrismaService } from './prisma.service';
 import { BookingsProcessor } from './bookings/bookings.processor';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 
 @Module({
+  controllers: [AppController],
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
@@ -38,6 +41,6 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
     BookingsModule,
     WebhooksModule,
   ],
-  providers: [PrismaService, BookingsProcessor],
+  providers: [PrismaService, BookingsProcessor, AppService],
 })
 export class AppModule {}
