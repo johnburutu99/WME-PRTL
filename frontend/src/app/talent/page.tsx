@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { Calendar as CalendarIcon, FileCheck, HelpCircle, DollarSign, ArrowUpRight, TrendingUp, CheckCircle, XCircle, ArrowRight, ShieldCheck, Briefcase } from 'lucide-react';
+import { Calendar as CalendarIcon, FileCheck, HelpCircle, DollarSign, ArrowUpRight, TrendingUp, CheckCircle, XCircle, ArrowRight, ShieldCheck, Briefcase, Menu, X, RefreshCw } from 'lucide-react';
 
 export default function TalentPortal() {
   const { user, token, logout } = useAuth();
@@ -10,10 +10,13 @@ export default function TalentPortal() {
   const [bookings, setBookings] = useState<any[]>([]);
   const [ledgers, setLedgers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Load bookings and ledger records
   const fetchPortalData = async () => {
-    setLoading(true);
+    if (bookings.length === 0 || ledgers.length === 0) {
+      setLoading(true);
+    }
     try {
       const bookingsRes = await fetch('http://localhost:3001/bookings', {
         headers: { Authorization: `Bearer ${token}` },
@@ -90,9 +93,32 @@ export default function TalentPortal() {
   const pendingOffers = bookings.filter((b) => b.status === 'OFFER_PENDING');
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row">
+      {/* Mobile Top Navbar */}
+      <header className="md:hidden h-16 bg-slate-900 border-b border-slate-800 px-6 flex justify-between items-center z-40 shrink-0">
+        <span className="text-xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-amber-600">
+          WME TALENT
+        </span>
+        <button
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          className="p-2 text-slate-400 hover:text-slate-100 transition-colors"
+        >
+          {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+      </header>
+
+      {/* Mobile Sidebar Backdrop */}
+      {sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-40 md:hidden"
+        />
+      )}
+
       {/* Sidebar navigation */}
-      <aside className="w-80 bg-slate-900 border-r border-slate-800 p-6 flex flex-col justify-between shrink-0">
+      <aside className={`fixed md:relative inset-y-0 left-0 w-80 bg-slate-900 border-r border-slate-800 p-6 flex flex-col justify-between shrink-0 z-50 md:z-auto transition-transform duration-300 ease-in-out ${
+        sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+      }`}>
         <div>
           <div className="mb-8">
             <span className="text-2xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-amber-600">
@@ -105,7 +131,7 @@ export default function TalentPortal() {
 
           <nav className="space-y-2">
             <button
-              onClick={() => setActiveTab('calendar')}
+              onClick={() => { setActiveTab('calendar'); setSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-sm transition-all ${
                 activeTab === 'calendar'
                   ? 'bg-amber-500 text-slate-950 font-semibold'
@@ -116,7 +142,7 @@ export default function TalentPortal() {
               Unified Itinerary Engine
             </button>
             <button
-              onClick={() => setActiveTab('offer-desk')}
+              onClick={() => { setActiveTab('offer-desk'); setSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-sm transition-all relative ${
                 activeTab === 'offer-desk'
                   ? 'bg-amber-500 text-slate-950 font-semibold'
@@ -132,7 +158,7 @@ export default function TalentPortal() {
               )}
             </button>
             <button
-              onClick={() => setActiveTab('ledger')}
+              onClick={() => { setActiveTab('ledger'); setSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-sm transition-all ${
                 activeTab === 'ledger'
                   ? 'bg-amber-500 text-slate-950 font-semibold'
@@ -165,7 +191,7 @@ export default function TalentPortal() {
       </aside>
 
       {/* Main Content Pane */}
-      <main className="flex-1 p-10 overflow-y-auto">
+      <main className="flex-1 p-6 md:p-10 overflow-y-auto">
         {loading ? (
           <div className="h-full flex items-center justify-center">
             <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
