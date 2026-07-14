@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useForm } from 'react-hook-form';
-import { Calendar, Building, DollarSign, Users, Award, ShieldAlert, CheckCircle, FileText, Lock } from 'lucide-react';
+import { Calendar, Building, DollarSign, Users, Award, ShieldAlert, CheckCircle, FileText, Lock, Menu, X, RefreshCw, Sparkles } from 'lucide-react';
 
 interface IntakeFormValues {
   talentId: string;
@@ -23,6 +23,8 @@ export default function BuyerPortal() {
   const [talents, setTalents] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [webhookBookingId, setWebhookBookingId] = useState('');
   const [webhookEvent, setWebhookEvent] = useState<'payment.deposit_cleared' | 'esign.nda_signed' | 'esign.longform_signed'>('payment.deposit_cleared');
@@ -204,50 +206,36 @@ export default function BuyerPortal() {
 
   // Load backend Schema and active bookings on mount
   useEffect(() => {
-    const fetchSchema = async () => {
-      try {
-        const res = await fetch('http://localhost:3001/bookings/schema', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const schema = await res.json();
-        setSchemaFields(schema);
-      } catch (err) {
-        console.error('Failed to load JSON schema from backend', err);
+    const loadAllData = async () => {
+      // Optimistic background refresh if we already have loaded once
+      if (bookings.length === 0 || !schemaFields || talents.length === 0) {
+        setLoading(true);
       }
-    };
-
-    const fetchBookings = async () => {
       try {
-        const res = await fetch('http://localhost:3001/bookings', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setBookings(data);
-        }
+        await Promise.all([
+          fetch('http://localhost:3001/bookings/schema', {
+            headers: { Authorization: `Bearer ${token}` },
+          }).then(res => res.json()).then(schema => setSchemaFields(schema)).catch(err => console.error(err)),
+          fetch('http://localhost:3001/bookings', {
+            headers: { Authorization: `Bearer ${token}` },
+          }).then(res => res.json()).then(data => {
+            if (Array.isArray(data)) setBookings(data);
+          }).catch(err => console.error(err)),
+          fetch('http://localhost:3001/bookings/talents', {
+            headers: { Authorization: `Bearer ${token}` },
+          }).then(res => res.json()).then(data => {
+            if (Array.isArray(data)) setTalents(data);
+          }).catch(err => console.error(err))
+        ]);
       } catch (err) {
-        console.error('Failed to load bookings', err);
-      }
-    };
-
-    const fetchTalents = async () => {
-      try {
-        const res = await fetch('http://localhost:3001/bookings/talents', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setTalents(data);
-        }
-      } catch (err) {
-        console.error('Failed to load talents from DB', err);
+        console.error('Failed to load portal configuration data', err);
+      } finally {
+        setLoading(false);
       }
     };
 
     if (token) {
-      fetchSchema();
-      fetchBookings();
-      fetchTalents();
+      loadAllData();
     }
   }, [token]);
 
@@ -295,9 +283,32 @@ export default function BuyerPortal() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row">
+      {/* Mobile Top Navbar */}
+      <header className="md:hidden h-16 bg-slate-900 border-b border-slate-800 px-6 flex justify-between items-center z-40 shrink-0">
+        <span className="text-xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-amber-600">
+          WME CLIENT
+        </span>
+        <button
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          className="p-2 text-slate-400 hover:text-slate-100 transition-colors"
+        >
+          {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+      </header>
+
+      {/* Mobile Sidebar Backdrop */}
+      {sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-40 md:hidden"
+        />
+      )}
+
       {/* Sidebar navigation */}
-      <aside className="w-80 bg-slate-900 border-r border-slate-800 p-6 flex flex-col justify-between shrink-0">
+      <aside className={`fixed md:relative inset-y-0 left-0 w-80 bg-slate-900 border-r border-slate-800 p-6 flex flex-col justify-between shrink-0 z-50 md:z-auto transition-transform duration-300 ease-in-out ${
+        sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+      }`}>
         <div>
           <div className="mb-8">
             <span className="text-2xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-amber-600">
@@ -310,7 +321,7 @@ export default function BuyerPortal() {
 
           <nav className="space-y-2">
             <button
-              onClick={() => setActiveTab('intake')}
+              onClick={() => { setActiveTab('intake'); setSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-sm transition-all ${
                 activeTab === 'intake'
                   ? 'bg-amber-500 text-slate-950 font-semibold'
@@ -321,7 +332,7 @@ export default function BuyerPortal() {
               Booking Intake & Forms
             </button>
             <button
-              onClick={() => setActiveTab('contracts')}
+              onClick={() => { setActiveTab('contracts'); setSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-sm transition-all ${
                 activeTab === 'contracts'
                   ? 'bg-amber-500 text-slate-950 font-semibold'
@@ -332,7 +343,7 @@ export default function BuyerPortal() {
               Contract Vault & Riders
             </button>
             <button
-              onClick={() => setActiveTab('ledger')}
+              onClick={() => { setActiveTab('ledger'); setSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-sm transition-all ${
                 activeTab === 'ledger'
                   ? 'bg-amber-500 text-slate-950 font-semibold'
@@ -365,7 +376,20 @@ export default function BuyerPortal() {
       </aside>
 
       {/* Main Content Pane */}
-      <main className="flex-1 p-10 overflow-y-auto">
+      <main className="flex-1 p-6 md:p-10 overflow-y-auto">
+        {loading ? (
+          <div className="max-w-4xl space-y-8 animate-pulse">
+            <div className="space-y-3">
+              <div className="h-8 w-64 bg-slate-900 rounded-lg"></div>
+              <div className="h-4 w-96 bg-slate-900 rounded-lg"></div>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              <div className="lg:col-span-7 h-[450px] bg-slate-900 border border-slate-800 rounded-2xl"></div>
+              <div className="lg:col-span-5 h-[450px] bg-slate-900 border border-slate-800 rounded-2xl"></div>
+            </div>
+          </div>
+        ) : (
+          <>
         {activeTab === 'intake' && (
           <div className="max-w-4xl space-y-8">
             <div>
@@ -694,6 +718,8 @@ export default function BuyerPortal() {
               )}
             </div>
           </div>
+        )}
+          </>
         )}
       </main>
     </div>
