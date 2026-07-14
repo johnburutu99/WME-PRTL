@@ -17,6 +17,12 @@ export class BookingsController {
     return this.bookingsService.getSchema();
   }
 
+  // 1b. Get all talents dynamically from DB
+  @Get('talents')
+  async getTalents() {
+    return this.bookingsService.getTalents();
+  }
+
   // 2. Submit booking (Buyer only)
   @Post()
   @Roles(Role.BUYER)

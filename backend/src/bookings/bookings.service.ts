@@ -12,6 +12,18 @@ export class BookingsService {
     @InjectQueue('bookings-pipeline') private readonly bookingsQueue: Queue,
   ) {}
 
+  // 1b. Get all talents dynamically from DB
+  async getTalents() {
+    return this.prisma.user.findMany({
+      where: { role: Role.TALENT },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+      },
+    });
+  }
+
   // 1. Dynamic Intake Form Schema
   getSchema() {
     return {
