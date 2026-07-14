@@ -24,6 +24,89 @@ export default function BuyerPortal() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
 
+  const [webhookBookingId, setWebhookBookingId] = useState('');
+  const [webhookEvent, setWebhookEvent] = useState<'payment.deposit_cleared' | 'esign.nda_signed' | 'esign.longform_signed'>('payment.deposit_cleared');
+  const [webhookReference, setWebhookReference] = useState('wire_chase_tr_9901A');
+  const [webhookDocUrl, setWebhookDocUrl] = useState('https://wme-vault.s3.amazonaws.com/contracts/completed_nda.pdf');
+  const [webhookSecret, setWebhookSecret] = useState('wme_hmac_webhook_secret_key');
+  const [webhookStatus, setWebhookStatus] = useState<string | null>(null);
+  const [isSendingWebhook, setIsSendingWebhook] = useState(false);
+
+  const triggerWebhook = async () => {
+    if (!webhookBookingId) {
+      alert('Please select a booking target for the webhook simulation.');
+      return;
+    }
+    setIsSendingWebhook(true);
+    setWebhookStatus(null);
+
+    try {
+      const secret = webhookSecret || 'wme_hmac_webhook_secret_key';
+
+      let payload: any = {
+        event: webhookEvent,
+        bookingId: webhookBookingId,
+      };
+
+      if (webhookEvent === 'payment.deposit_cleared') {
+        payload.reference = webhookReference;
+      } else {
+        payload.documentUrl = webhookDocUrl;
+      }
+
+      const payloadStr = JSON.stringify(payload);
+
+      const encoder = new TextEncoder();
+      const keyData = encoder.encode(secret);
+      const messageData = encoder.encode(payloadStr);
+
+      const cryptoKey = await window.crypto.subtle.importKey(
+        "raw",
+        keyData,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+
+      const signatureBuffer = await window.crypto.subtle.sign(
+        "HMAC",
+        cryptoKey,
+        messageData
+      );
+
+      const hashArray = Array.from(new Uint8Array(signatureBuffer));
+      const signature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+      const res = await fetch('http://localhost:3001/webhooks/events', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-wme-signature': signature,
+        },
+        body: payloadStr,
+      });
+
+      const responseData = await res.json();
+      if (!res.ok) {
+        throw new Error(responseData.message || 'Webhook invocation failed');
+      }
+
+      setWebhookStatus(`SUCCESS: Status: ${res.status}. Response: ${JSON.stringify(responseData)}`);
+
+      const bookingsRes = await fetch('http://localhost:3001/bookings', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await bookingsRes.json();
+      if (Array.isArray(data)) {
+        setBookings(data);
+      }
+    } catch (err: any) {
+      setWebhookStatus(`ERROR: ${err.message}`);
+    } finally {
+      setIsSendingWebhook(false);
+    }
+  };
+
   // Form setup
   const {
     register,
@@ -41,6 +124,83 @@ export default function BuyerPortal() {
       usageRights: 'Live promotion and digital branding only.',
     },
   });
+
+  const renderDynamicField = (key: string, prop: any) => {
+    if (!schemaFields) return null;
+    const isRequired = schemaFields.required?.includes(key);
+
+    if (key === 'talentId') {
+      return (
+        <div key={key}>
+          <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
+            {prop.title || key} {isRequired && <span className="text-amber-500">*</span>}
+          </label>
+          <select
+            {...register(key as any, { required: isRequired })}
+            className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
+          >
+            <option value="">-- Choose Artist / DJ --</option>
+            {talents.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+          {prop.description && <p className="text-[11px] text-slate-500 mt-1">{prop.description}</p>}
+          {errors[key as keyof IntakeFormValues] && <p className="text-red-400 text-xs mt-1">{prop.title || key} is required</p>}
+        </div>
+      );
+    }
+
+    if (key === 'usageRights') {
+      return (
+        <div key={key} className="col-span-full">
+          <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
+            {prop.title || key} {isRequired && <span className="text-amber-500">*</span>}
+          </label>
+          <textarea
+            {...register(key as any, { required: isRequired })}
+            rows={3}
+            className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
+            placeholder={prop.description || "Specify filming, broadcast, or commercial branding requirements."}
+          ></textarea>
+          {errors[key as keyof IntakeFormValues] && <p className="text-red-400 text-xs mt-1">{prop.title || key} is required</p>}
+        </div>
+      );
+    }
+
+    // Determine input type
+    let inputType = 'text';
+    if (prop.type === 'integer' || prop.type === 'number') {
+      inputType = 'number';
+    } else if (prop.format === 'date-time') {
+      inputType = 'datetime-local';
+    }
+
+    return (
+      <div key={key}>
+        <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
+          {prop.title || key} {isRequired && <span className="text-amber-500">*</span>}
+        </label>
+        <input
+          type={inputType}
+          {...register(key as any, {
+            required: isRequired,
+            min: prop.minimum || undefined,
+            minLength: prop.minLength || undefined,
+            maxLength: prop.maxLength || undefined,
+          })}
+          className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
+          placeholder={prop.title || key}
+        />
+        {errors[key as keyof IntakeFormValues] && (
+          <p className="text-red-400 text-xs mt-1">
+            {prop.title || key} is invalid or required
+          </p>
+        )}
+      </div>
+    );
+  };
 
   // Load backend Schema and active bookings on mount
   useEffect(() => {
@@ -70,15 +230,24 @@ export default function BuyerPortal() {
       }
     };
 
-    setTalents([
-      { id: 'mock-talent-1', name: 'DJ Sparkle' },
-      { id: 'mock-talent-2', name: 'Acoustic Waves' },
-      { id: 'mock-talent-3', name: 'Neon Symphonies' },
-    ]);
+    const fetchTalents = async () => {
+      try {
+        const res = await fetch('http://localhost:3001/bookings/talents', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setTalents(data);
+        }
+      } catch (err) {
+        console.error('Failed to load talents from DB', err);
+      }
+    };
 
     if (token) {
       fetchSchema();
       fetchBookings();
+      fetchTalents();
     }
   }, [token]);
 
@@ -87,22 +256,8 @@ export default function BuyerPortal() {
     setIsSubmitting(true);
     setFormSuccess(null);
     try {
-      let finalTalentId = values.talentId;
-      if (values.talentId === 'mock-talent-1' || !values.talentId) {
-        // Find DJ Sparkle's seed id from fetched list
-        const talentResponse = await fetch('http://localhost:3001/bookings', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const fetchedBookings = await talentResponse.json();
-        const existingConfirmed = fetchedBookings.find((b: any) => b.status === 'CONFIRMED');
-        if (existingConfirmed) {
-          finalTalentId = existingConfirmed.talentId;
-        }
-      }
-
       const submissionPayload = {
         ...values,
-        talentId: finalTalentId,
         venueCapacity: Number(values.venueCapacity),
         guaranteedBudget: Number(values.guaranteedBudget),
       };
@@ -241,109 +396,23 @@ export default function BuyerPortal() {
                 </div>
 
                 <form onSubmit={handleSubmit(onSubmitIntake)} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
-                      Select Targeted Talent
-                    </label>
-                    <select
-                      {...register('talentId', { required: true })}
-                      className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
-                    >
-                      <option value="">-- Choose Artist / DJ --</option>
-                      {talents.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
-                    {errors.talentId && <p className="text-red-400 text-xs mt-1">Talent is required</p>}
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
-                      Event Title / Concert Name
-                    </label>
-                    <input
-                      type="text"
-                      {...register('eventTitle', { required: true, minLength: 3 })}
-                      className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
-                      placeholder="e.g. DJ Sparkle Summer Arena"
-                    />
-                    {errors.eventTitle && <p className="text-red-400 text-xs mt-1">Title is required (min 3 chars)</p>}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
-                        Guaranteed Budget ($)
-                      </label>
-                      <input
-                        type="number"
-                        {...register('guaranteedBudget', { required: true, min: 1000 })}
-                        className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
-                        placeholder="Min 1000"
-                      />
-                      {errors.guaranteedBudget && <p className="text-red-400 text-xs mt-1">Budget must be at least $1,000</p>}
+                  {schemaFields && schemaFields.properties ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {Object.entries(schemaFields.properties).map(([key, prop]) =>
+                        renderDynamicField(key, prop)
+                      )}
                     </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
-                        Venue Capacity
-                      </label>
-                      <input
-                        type="number"
-                        {...register('venueCapacity', { required: true, min: 1 })}
-                        className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
-                        placeholder="Min 1"
-                      />
-                      {errors.venueCapacity && <p className="text-red-400 text-xs mt-1">Capacity must be at least 1</p>}
+                  ) : (
+                    <div className="text-center py-6">
+                      <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                      <p className="text-xs text-slate-500 mt-2">Compiling metadata-driven schema...</p>
                     </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
-                        Event Date & Time
-                      </label>
-                      <input
-                        type="datetime-local"
-                        {...register('eventDate', { required: true })}
-                        className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
-                      />
-                      {errors.eventDate && <p className="text-red-400 text-xs mt-1">Event Date is required</p>}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
-                        Venue Name & Location
-                      </label>
-                      <input
-                        type="text"
-                        {...register('venueName', { required: true })}
-                        className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
-                        placeholder="e.g. Red Rocks Amphitheatre"
-                      />
-                      {errors.venueName && <p className="text-red-400 text-xs mt-1">Venue Name is required</p>}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
-                      Usage & Broadcast Rights Details
-                    </label>
-                    <textarea
-                      {...register('usageRights', { required: true })}
-                      rows={3}
-                      className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
-                      placeholder="Specify filming, broadcast, or commercial branding requirements."
-                    ></textarea>
-                    {errors.usageRights && <p className="text-red-400 text-xs mt-1">Usage rights details are required</p>}
-                  </div>
+                  )}
 
                   <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold py-3 px-4 rounded-xl text-sm uppercase tracking-wider transition-all disabled:opacity-50"
+                    className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold py-3 px-4 rounded-xl text-sm uppercase tracking-wider transition-all disabled:opacity-50 mt-4"
                   >
                     {isSubmitting ? 'Transmitting To Agency Vetting...' : 'Transmit Booking Intake Form'}
                   </button>
@@ -471,7 +540,7 @@ export default function BuyerPortal() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
               <div className="bg-slate-900 border border-slate-850 rounded-2xl p-6 shadow-xl space-y-4">
                 <h2 className="text-lg font-bold flex items-center gap-2">
                   <DollarSign className="text-amber-500" size={20} />
@@ -516,6 +585,113 @@ export default function BuyerPortal() {
                   </button>
                 </div>
               </div>
+            </div>
+
+            {/* Operational HMAC Webhook Simulator */}
+            <div className="bg-slate-900 border border-slate-850 rounded-2xl p-6 shadow-xl space-y-6">
+              <div>
+                <h2 className="text-lg font-bold flex items-center gap-2">
+                  <ShieldAlert className="text-amber-500" size={20} />
+                  Operational Webhook HMAC Simulator
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  Trigger secure, cryptographically verified backend callbacks simulating bank settlements and contract signatures.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
+                    Target Booking
+                  </label>
+                  <select
+                    value={webhookBookingId}
+                    onChange={(e) => setWebhookBookingId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
+                  >
+                    <option value="">-- Choose Target Booking --</option>
+                    {bookings.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.eventTitle} (${Number(b.guaranteedBudget).toLocaleString()}) [{b.status}]
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
+                    Event Type
+                  </label>
+                  <select
+                    value={webhookEvent}
+                    onChange={(e) => setWebhookEvent(e.target.value as any)}
+                    className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
+                  >
+                    <option value="payment.deposit_cleared">payment.deposit_cleared (Clear Deposit & Confirm)</option>
+                    <option value="esign.nda_signed">esign.nda_signed (NDA Contract Signed)</option>
+                    <option value="esign.longform_signed">esign.longform_signed (Long Form Contract Signed)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
+                    Webhook Signing Secret (HMAC)
+                  </label>
+                  <input
+                    type="password"
+                    value={webhookSecret}
+                    onChange={(e) => setWebhookSecret(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
+                    placeholder="Enter HMAC Secret key"
+                  />
+                </div>
+
+                {webhookEvent === 'payment.deposit_cleared' ? (
+                  <div className="col-span-full">
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
+                      Bank Transfer Reference Code
+                    </label>
+                    <input
+                      type="text"
+                      value={webhookReference}
+                      onChange={(e) => setWebhookReference(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
+                      placeholder="e.g. wire_chase_tr_9901A"
+                    />
+                  </div>
+                ) : (
+                  <div className="col-span-full">
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-widest mb-1.5">
+                      Completed Document Vault URL
+                    </label>
+                    <input
+                      type="text"
+                      value={webhookDocUrl}
+                      onChange={(e) => setWebhookDocUrl(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-2.5 rounded-xl text-sm focus:ring-2 focus:ring-amber-500/50"
+                      placeholder="e.g. https://wme-vault.s3.amazonaws.com/contracts/nda.pdf"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={triggerWebhook}
+                disabled={isSendingWebhook}
+                className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold py-3 px-4 rounded-xl text-sm uppercase tracking-wider transition-all disabled:opacity-50"
+              >
+                {isSendingWebhook ? 'Signing & Transmitting HMAC Envelope...' : 'Send Verified HMAC Webhook'}
+              </button>
+
+              {webhookStatus && (
+                <div className={`p-4 rounded-xl border text-xs font-mono break-all ${
+                  webhookStatus.startsWith('ERROR')
+                    ? 'bg-red-500/10 border-red-500/20 text-red-400'
+                    : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                }`}>
+                  {webhookStatus}
+                </div>
+              )}
             </div>
           </div>
         )}

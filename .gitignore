@@ -43,3 +43,4 @@ out/
 **/node_modules/
 **/dist/
 **/.next/
+dump.rdb
