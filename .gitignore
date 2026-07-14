@@ -44,3 +44,5 @@ out/
 **/dist/
 **/.next/
 dump.rdb
+screenshot_*.png
+capture-screenshots.js
