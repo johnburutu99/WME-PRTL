@@ -1,7 +1,7 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 
 export type UserRole = 'BUYER' | 'TALENT' | 'AGENT' | 'ADMIN';
 
@@ -14,65 +14,70 @@ export interface User {
 
 interface AuthContextType {
   user: User | null;
-  token: string | null;
   loading: boolean;
-  login: (token: string, userData: User) => void;
-  logout: () => void;
+  login: (token: string, userData: User) => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/** Read a cookie value by name — used only to hydrate non-sensitive user profile */
+function getCookieValue(name: string): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const pathname = usePathname();
 
   useEffect(() => {
-    // Check localStorage on mount
-    const savedToken = localStorage.getItem('wme_token');
-    const savedUser = localStorage.getItem('wme_user');
-
-    if (savedToken && savedUser) {
+    // Hydrate user state from the readable profile cookie (no token exposure)
+    const savedUser = getCookieValue('wme_user');
+    if (savedUser) {
       try {
-        setToken(savedToken);
         setUser(JSON.parse(savedUser));
-      } catch (e) {
-        // Corrupted session
-        localStorage.removeItem('wme_token');
-        localStorage.removeItem('wme_user');
+      } catch {
+        // Corrupted cookie — will be cleared on next logout or login
       }
     }
     setLoading(false);
   }, []);
 
-  const login = (newToken: string, userData: User) => {
-    setToken(newToken);
-    setUser(userData);
-    localStorage.setItem('wme_token', newToken);
-    localStorage.setItem('wme_user', JSON.stringify(userData));
+  const login = useCallback(async (token: string, userData: User) => {
+    // Store the JWT in an httpOnly cookie via our Next.js API route
+    const res = await fetch('/api/auth/set-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, user: userData }),
+    });
 
-    // Optimistic redirect based on user role
+    if (!res.ok) {
+      throw new Error('Failed to establish secure session');
+    }
+
+    setUser(userData);
+
     if (userData.role === 'BUYER') {
       router.push('/buyer');
     } else if (userData.role === 'TALENT') {
       router.push('/talent');
     } else {
-      router.push('/buyer'); // fallback
+      // AGENT / ADMIN — redirect to login until their portal is built
+      router.push('/login');
     }
-  };
+  }, [router]);
 
-  const logout = () => {
-    setToken(null);
+  const logout = useCallback(async () => {
+    await fetch('/api/auth/set-token', { method: 'DELETE' });
     setUser(null);
-    localStorage.removeItem('wme_token');
-    localStorage.removeItem('wme_user');
     router.push('/login');
-  };
+  }, [router]);
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

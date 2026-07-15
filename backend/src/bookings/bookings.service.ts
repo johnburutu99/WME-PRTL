@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
-import { CreateBookingDto, NegotiateBookingDto } from './dto/booking.dto';
+import { CreateBookingDto, OfferResponseAction } from './dto/booking.dto';
 import { Role, BookingStatus, TransactionType, TransactionStatus } from '@prisma/client';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -148,7 +148,7 @@ export class BookingsService {
   }
 
   // 4. Offer Desk: Talent approves/declines a deal memo
-  async respondToOffer(bookingId: string, talentId: string, status: 'CONFIRMED' | 'OFFER_REJECTED') {
+  async respondToOffer(bookingId: string, talentId: string, status: OfferResponseAction) {
     const booking = await this.prisma.booking.findFirst({
       where: { id: bookingId, talentId },
     });
@@ -161,7 +161,7 @@ export class BookingsService {
       throw new BadRequestException(`Cannot approve/decline an offer in "${booking.status}" status.`);
     }
 
-    const updatedStatus = status === 'CONFIRMED' ? BookingStatus.NDA_PENDING : BookingStatus.OFFER_REJECTED;
+    const updatedStatus = status === OfferResponseAction.CONFIRMED ? BookingStatus.NDA_PENDING : BookingStatus.OFFER_REJECTED;
 
     const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.booking.update({

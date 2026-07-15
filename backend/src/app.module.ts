@@ -11,6 +11,8 @@ import { BookingsProcessor } from './bookings/bookings.processor';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 
 @Module({
   controllers: [AppController],
@@ -18,17 +20,25 @@ import { AppService } from './app.service';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    // Rate limiting: 60 requests per minute globally; auth routes further restricted in AuthModule
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000,
+        limit: 60,
+      },
+    ]),
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
         connection: {
           host: configService.get<string>('REDIS_HOST') || 'localhost',
           port: configService.get<number>('REDIS_PORT') || 6379,
+          password: configService.get<string>('REDIS_PASSWORD') || undefined,
         },
       }),
       inject: [ConfigService],
     }),
-    // Visual Bull Board setup at /queues
+    // Bull Board — admin-only queue monitor mounted at /queues
     BullBoardModule.forRoot({
       route: '/queues',
       adapter: ExpressAdapter,
@@ -41,6 +51,15 @@ import { AppService } from './app.service';
     BookingsModule,
     WebhooksModule,
   ],
-  providers: [PrismaService, BookingsProcessor, AppService],
+  providers: [
+    PrismaService,
+    BookingsProcessor,
+    AppService,
+    // Apply rate limiting globally
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

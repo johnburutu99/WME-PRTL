@@ -1,3 +1,4 @@
+import { IsEnum } from 'class-validator';
 import { IsString, IsNotEmpty, IsDateString, IsInt, IsNumber, Min } from 'class-validator';
 
 export class CreateBookingDto {
@@ -27,6 +28,16 @@ export class CreateBookingDto {
   @IsString()
   @IsNotEmpty()
   usageRights: string;
+}
+
+export enum OfferResponseAction {
+  CONFIRMED = 'CONFIRMED',
+  OFFER_REJECTED = 'OFFER_REJECTED',
+}
+
+export class RespondToOfferDto {
+  @IsEnum(OfferResponseAction)
+  status: OfferResponseAction;
 }
 
 export class NegotiateBookingDto {

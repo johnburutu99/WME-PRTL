@@ -1,4 +1,16 @@
-import { Controller, Post, Headers, Body, BadRequestException, HttpCode, HttpStatus, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Headers,
+  Body,
+  BadRequestException,
+  HttpCode,
+  HttpStatus,
+  Logger,
+  UnauthorizedException,
+  RawBody,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
 import { BookingStatus, TransactionType, TransactionStatus } from '@prisma/client';
 import * as crypto from 'crypto';
@@ -6,33 +18,54 @@ import * as crypto from 'crypto';
 @Controller('webhooks')
 export class WebhooksController {
   private readonly logger = new Logger(WebhooksController.name);
+  private readonly webhookSecret: string;
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private configService: ConfigService,
+  ) {
+    const secret = this.configService.get<string>('WEBHOOK_SECRET');
+    if (!secret) {
+      throw new Error('FATAL: WEBHOOK_SECRET is not configured.');
+    }
+    this.webhookSecret = secret;
+  }
 
   @Post('events')
   @HttpCode(HttpStatus.OK)
   async handleWebhook(
     @Headers('x-wme-signature') signature: string,
+    @RawBody() rawBody: Buffer,
     @Body() payload: any,
   ) {
     if (!signature) {
       throw new UnauthorizedException('Missing x-wme-signature header');
     }
 
-    const secret = process.env.WEBHOOK_SECRET || 'wme_hmac_webhook_secret_key';
-
-    // Verify HMAC signature
-    const hmac = crypto.createHmac('sha256', secret);
-    const expectedSignature = hmac.update(JSON.stringify(payload)).digest('hex');
-
-    if (signature !== expectedSignature) {
-      this.logger.warn(`Signature mismatch. Expected: ${expectedSignature}, Received: ${signature}`);
-      throw new UnauthorizedException('Invalid HMAC signature verification failed');
+    if (!rawBody || rawBody.length === 0) {
+      throw new BadRequestException('Empty request body');
     }
 
-    this.logger.log(`Received cryptographically verified webhook event: ${payload.event}`);
+    // Verify HMAC against the raw body bytes — not a re-serialized object
+    const expectedSignature = crypto
+      .createHmac('sha256', this.webhookSecret)
+      .update(rawBody)
+      .digest('hex');
 
-    // Reconcile e-sign or payment callback with DB ACID transitions
+    // Constant-time comparison to prevent timing attacks
+    const sigBuffer = Buffer.from(signature);
+    const expectedBuffer = Buffer.from(expectedSignature);
+
+    if (
+      sigBuffer.length !== expectedBuffer.length ||
+      !crypto.timingSafeEqual(sigBuffer, expectedBuffer)
+    ) {
+      this.logger.warn(`Webhook HMAC signature mismatch — potential forgery attempt.`);
+      throw new UnauthorizedException('Invalid HMAC signature');
+    }
+
+    this.logger.log(`Verified webhook event received: ${payload.event}`);
+
     const { bookingId, event } = payload;
     if (!bookingId) {
       throw new BadRequestException('Payload missing bookingId');
@@ -47,7 +80,6 @@ export class WebhooksController {
 
     const result = await this.prisma.$transaction(async (tx) => {
       if (event === 'payment.deposit_cleared') {
-        // Confirm booking in DB + update transaction status + seed ledger
         await tx.booking.update({
           where: { id: bookingId },
           data: { status: BookingStatus.CONFIRMED },
@@ -57,16 +89,15 @@ export class WebhooksController {
           data: {
             bookingId,
             type: TransactionType.DEPOSIT,
-            amount: booking.guaranteedBudget.mul(0.5), // 50% deposit
+            amount: booking.guaranteedBudget.mul(0.5),
             status: TransactionStatus.CLEARED,
-            reference: payload.reference || 'webhook_wire_deposit_123',
+            reference: payload.reference || 'webhook_wire_deposit',
             clearedAt: new Date(),
           },
         });
 
-        // Upsert Financial Ledger for Talent
-        const commission = booking.guaranteedBudget.mul(0.15); // 15% agency commission
-        const withholding = booking.guaranteedBudget.mul(0.20); // 20% tax withholding
+        const commission = booking.guaranteedBudget.mul(0.15);
+        const withholding = booking.guaranteedBudget.mul(0.20);
         const netPayout = booking.guaranteedBudget.sub(commission).sub(withholding);
 
         await tx.financialLedger.create({
@@ -81,7 +112,7 @@ export class WebhooksController {
           },
         });
 
-        this.logger.log(`ACID state transitioned booking ${bookingId} to CONFIRMED with financial ledgers generated.`);
+        this.logger.log(`Booking ${bookingId} → CONFIRMED with ledger entries created.`);
         return { success: true, message: 'Deposit cleared and booking confirmed' };
       }
 
@@ -102,7 +133,7 @@ export class WebhooksController {
           },
         });
 
-        this.logger.log(`ACID state transitioned booking ${bookingId} to NDA_SIGNED.`);
+        this.logger.log(`Booking ${bookingId} → NDA_SIGNED.`);
         return { success: true, message: 'NDA signed and logged' };
       }
 
@@ -123,7 +154,7 @@ export class WebhooksController {
           },
         });
 
-        this.logger.log(`ACID state transitioned booking ${bookingId} to CONTRACT_SIGNED.`);
+        this.logger.log(`Booking ${bookingId} → CONTRACT_SIGNED.`);
         return { success: true, message: 'Long form contract signed and logged' };
       }
 

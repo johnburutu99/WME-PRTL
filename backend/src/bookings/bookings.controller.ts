@@ -4,7 +4,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { Role, BookingStatus } from '@prisma/client';
-import { CreateBookingDto } from './dto/booking.dto';
+import { CreateBookingDto, RespondToOfferDto } from './dto/booking.dto';
 
 @Controller('bookings')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -36,15 +36,15 @@ export class BookingsController {
     return this.bookingsService.getBookingsForUser(req.user);
   }
 
-  // 4. Offer Desk Response (Talent only)
+  // 4. Offer Desk Response (Talent only) — validated via DTO
   @Patch(':id/respond')
   @Roles(Role.TALENT)
   async respondToOffer(
     @Param('id') bookingId: string,
     @Request() req,
-    @Body('status') status: 'CONFIRMED' | 'OFFER_REJECTED',
+    @Body() dto: RespondToOfferDto,
   ) {
-    return this.bookingsService.respondToOffer(bookingId, req.user.id, status);
+    return this.bookingsService.respondToOffer(bookingId, req.user.id, dto.status);
   }
 
   // 5. Get Talent Ledgers (Talent only)
