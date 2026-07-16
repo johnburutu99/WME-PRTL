@@ -3,8 +3,11 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Install build tools needed for native addons (bcrypt)
+RUN apk add --no-cache python3 make g++
+
 COPY package*.json ./
-RUN npm ci --ignore-scripts
+RUN npm ci
 
 COPY . .
 RUN npx prisma generate
@@ -17,11 +20,13 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Copy only production dependencies
-COPY package*.json ./
-RUN npm ci --omit=dev --ignore-scripts
+# Install build tools for native addon compilation in production install
+RUN apk add --no-cache python3 make g++
 
-# Copy built output and Prisma client
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+# Copy built output and Prisma client from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
@@ -33,4 +38,5 @@ USER appuser
 
 EXPOSE 3001
 
-CMD ["node", "dist/src/main"]
+# Run migrations then start — Render will execute this on every deploy
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main"]

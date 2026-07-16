@@ -29,13 +29,29 @@ import { APP_GUARD } from '@nestjs/core';
     ]),
     BullModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        connection: {
-          host: configService.get<string>('REDIS_HOST') || 'localhost',
-          port: configService.get<number>('REDIS_PORT') || 6379,
-          password: configService.get<string>('REDIS_PASSWORD') || undefined,
-        },
-      }),
+      useFactory: async (configService: ConfigService) => {
+        // Render provides a single REDIS_URL; parse it into ConnectionOptions.
+        // Local dev falls back to individual host/port/password vars.
+        const redisUrl = configService.get<string>('REDIS_URL');
+        if (redisUrl) {
+          const parsed = new URL(redisUrl);
+          return {
+            connection: {
+              host: parsed.hostname,
+              port: parseInt(parsed.port || '6379', 10),
+              password: parsed.password || undefined,
+              tls: parsed.protocol === 'rediss:' ? {} : undefined,
+            },
+          };
+        }
+        return {
+          connection: {
+            host: configService.get<string>('REDIS_HOST') || 'localhost',
+            port: configService.get<number>('REDIS_PORT') || 6379,
+            password: configService.get<string>('REDIS_PASSWORD') || undefined,
+          },
+        };
+      },
       inject: [ConfigService],
     }),
     // Bull Board — admin-only queue monitor mounted at /queues

@@ -1,0 +1,49 @@
+version: "1"
+
+services:
+  # ─── NestJS Backend ──────────────────────────────────────────────────────────
+  - type: web
+    name: wme-backend
+    runtime: docker
+    # Point to the backend subfolder containing the Dockerfile
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter          # $7/mo — upgrade to standard for production traffic
+    region: oregon         # match your Supabase us-west-1 region for low latency
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      - key: PORT
+        value: 3001
+
+      # Supabase Postgres — paste your pooler connection string
+      - key: DATABASE_URL
+        sync: false        # set manually in Render dashboard (never commit secrets)
+
+      # JWT — generate with: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+      - key: JWT_SECRET
+        sync: false
+
+      # Webhook HMAC — generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+      - key: WEBHOOK_SECRET
+        sync: false
+
+      # Injected automatically from the Redis service defined below
+      - key: REDIS_URL
+        fromService:
+          name: wme-redis
+          type: redis
+          property: connectionString
+
+      # Your Vercel frontend URL — set after Vercel deploy
+      - key: FRONTEND_URL
+        sync: false
+
+  # ─── Redis (BullMQ Queue) ─────────────────────────────────────────────────────
+  - type: redis
+    name: wme-redis
+    plan: starter          # free tier — 25MB, suitable for job queues
+    region: oregon
+    maxmemoryPolicy: noeviction   # never evict BullMQ job data
