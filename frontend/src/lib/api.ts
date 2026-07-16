@@ -2,6 +2,7 @@
 // All requests route through /api/proxy/... — a Next.js server-side proxy
 // that reads the httpOnly JWT cookie and forwards it as a Bearer token.
 // The JWT is never accessible to browser JavaScript.
+// The backend URL is a private server-side env var (BACKEND_API_URL) — never bundled.
 
 export class ApiError extends Error {
   constructor(
