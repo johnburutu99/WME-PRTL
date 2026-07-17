@@ -1,17 +1,12 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useAuth } from '@/context/AuthContext';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, ApiError } from '@/lib/api';
-
-interface LoginResponse {
-  accessToken: string;
-  user: { id: string; email: string; name: string; role: 'BUYER' | 'TALENT' | 'AGENT' | 'ADMIN' };
-}
+import { createClient } from '@/lib/supabase/client';
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -23,14 +18,24 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const data = await api.post<LoginResponse>('/auth/login', { email, password });
-      await login(data.accessToken, data.user);
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.message);
-      } else {
-        setError('Unable to reach the server. Please try again.');
+      const supabase = createClient();
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+
+      if (signInError) {
+        setError('Invalid email or password.');
+        return;
       }
+
+      // Read role from user_metadata (set at registration)
+      const role = data.user?.user_metadata?.role ?? 'BUYER';
+      if (role === 'TALENT') {
+        router.push('/talent');
+      } else {
+        router.push('/buyer');
+      }
+      router.refresh();
+    } catch {
+      setError('Unable to sign in. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -38,7 +43,6 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center px-4 relative overflow-hidden">
-      {/* Background gradients */}
       <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
 
@@ -64,12 +68,9 @@ export default function LoginPage() {
               Corporate Email Address
             </label>
             <input
-              id="email"
-              type="email"
-              value={email}
+              id="email" type="email" value={email}
               onChange={(e) => setEmail(e.target.value)}
-              required
-              autoComplete="email"
+              required autoComplete="email"
               className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all text-sm placeholder-slate-600"
               placeholder="name@company.com"
             />
@@ -80,32 +81,24 @@ export default function LoginPage() {
               Password
             </label>
             <input
-              id="password"
-              type="password"
-              value={password}
+              id="password" type="password" value={password}
               onChange={(e) => setPassword(e.target.value)}
-              required
-              autoComplete="current-password"
+              required autoComplete="current-password"
               className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all text-sm placeholder-slate-600"
               placeholder="••••••••"
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-semibold py-3 px-4 rounded-xl transition-all shadow-lg hover:shadow-amber-500/10 disabled:opacity-50 text-sm mt-2"
+          <button type="submit" disabled={loading}
+            className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-semibold py-3 px-4 rounded-xl transition-all shadow-lg disabled:opacity-50 text-sm mt-2"
           >
-            {loading ? 'Authenticating...' : 'Sign In'}
+            {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
 
         <div className="mt-6 border-t border-slate-800 pt-6 text-center text-sm text-slate-400">
           <p className="mb-2">Need a portal account?</p>
-          <Link
-            href="/register"
-            className="text-amber-400 hover:underline font-medium text-xs uppercase tracking-wider"
-          >
+          <Link href="/register" className="text-amber-400 hover:underline font-medium text-xs uppercase tracking-wider">
             Register Portal Account
           </Link>
         </div>

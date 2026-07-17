@@ -1,83 +1,86 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 export type UserRole = 'BUYER' | 'TALENT' | 'AGENT' | 'ADMIN';
 
-export interface User {
-  id: string;
+export interface AppUser {
+  id: string;           // app User.id (our UUID, not the auth UUID)
   email: string;
   name: string;
   role: UserRole;
+  authId: string;       // Supabase Auth user id
 }
 
 interface AuthContextType {
-  user: User | null;
+  user: AppUser | null;
   loading: boolean;
-  login: (token: string, userData: User) => Promise<void>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-/** Read a cookie value by name — used only to hydrate non-sensitive user profile */
-function getCookieValue(name: string): string | null {
-  if (typeof document === 'undefined') return null;
-  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const router = useRouter();
+  const supabase = createClient();
+
+  const loadAppUser = async (authUser: SupabaseUser) => {
+    // Fetch the app-level User row linked to this auth session
+    const { data } = await supabase
+      .from('User')
+      .select('id, email, name, role')
+      .eq('auth_user_id', authUser.id)
+      .single();
+
+    if (data) {
+      setUser({
+        id: data.id,
+        email: data.email,
+        name: data.name,
+        role: data.role as UserRole,
+        authId: authUser.id,
+      });
+    } else {
+      setUser(null);
+    }
+  };
 
   useEffect(() => {
-    // Hydrate user state from the readable profile cookie (no token exposure)
-    const savedUser = getCookieValue('wme_user');
-    if (savedUser) {
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch {
-        // Corrupted cookie — will be cleared on next logout or login
+    // Hydrate on mount
+    supabase.auth.getUser().then(({ data: { user: authUser } }) => {
+      if (authUser) {
+        loadAppUser(authUser).finally(() => setLoading(false));
+      } else {
+        setLoading(false);
       }
-    }
-    setLoading(false);
-  }, []);
-
-  const login = useCallback(async (token: string, userData: User) => {
-    // Store the JWT in an httpOnly cookie via our Next.js API route
-    const res = await fetch('/api/auth/set-token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, user: userData }),
     });
 
-    if (!res.ok) {
-      throw new Error('Failed to establish secure session');
-    }
+    // Subscribe to auth state changes (login, logout, token refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        if (session?.user) {
+          await loadAppUser(session.user);
+        } else {
+          setUser(null);
+        }
+        setLoading(false);
+      },
+    );
 
-    setUser(userData);
+    return () => subscription.unsubscribe();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    if (userData.role === 'BUYER') {
-      router.push('/buyer');
-    } else if (userData.role === 'TALENT') {
-      router.push('/talent');
-    } else {
-      // AGENT / ADMIN — redirect to login until their portal is built
-      router.push('/login');
-    }
-  }, [router]);
-
-  const logout = useCallback(async () => {
-    await fetch('/api/auth/set-token', { method: 'DELETE' });
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
-    router.push('/login');
-  }, [router]);
+  };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, logout }}>
       {children}
     </AuthContext.Provider>
   );
@@ -85,8 +88,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 }
