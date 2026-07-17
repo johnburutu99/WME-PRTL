@@ -79,7 +79,7 @@ export async function createBooking(
 ): Promise<ActionResult<{ id: string }>> {
   const parsed = CreateBookingSchema.safeParse(input);
   if (!parsed.success) {
-    return { data: null, error: parsed.error.errors[0].message };
+    return { data: null, error: parsed.error.issues[0].message };
   }
 
   const supabase = await createClient();
