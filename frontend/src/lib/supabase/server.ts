@@ -3,14 +3,22 @@ import { cookies } from 'next/headers';
 
 /**
  * Server-side Supabase client (Server Components, Server Actions, Route Handlers).
- * Reads/writes auth cookies via Next.js `cookies()` — session is fully server-managed.
+ * Uses the SERVICE ROLE KEY so server actions can bypass RLS when needed
+ * (e.g. inserting a User row during registration before the session exists).
+ * The publishable key is used for browser-side clients only.
  */
 export async function createClient() {
   const cookieStore = await cookies();
 
+  // Use service role on the server so RLS-bypass writes (register, etc.) work.
+  // The service role key is never sent to the browser.
+  const supabaseKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
+
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    supabaseKey,
     {
       cookies: {
         getAll() {
@@ -22,8 +30,7 @@ export async function createClient() {
               cookieStore.set(name, value, options);
             });
           } catch {
-            // setAll called from a Server Component — cookies can be read but not set.
-            // This is safe: the middleware handles session refresh writes.
+            // Called from a Server Component — middleware handles session refresh.
           }
         },
       },
