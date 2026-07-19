@@ -8,6 +8,7 @@ import {
   Calendar, FileText, Lock, DollarSign, Award,
   ShieldAlert, CheckCircle, Menu, X, RefreshCw,
 } from 'lucide-react';
+import { WelcomePopup } from '@/components/WelcomePopup';
 import {
   getBookings, getTalents, getBookingSchema, createBooking,
 } from '@/lib/actions/bookings.actions';
@@ -179,6 +180,7 @@ export default function BuyerPortal() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row">
+      <WelcomePopup />
       {/* Mobile Top Navbar */}
       <header className="md:hidden h-16 bg-slate-900 border-b border-slate-800 px-6 flex justify-between items-center z-40 shrink-0">
         <span className="text-xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-amber-600">WME CLIENT</span>

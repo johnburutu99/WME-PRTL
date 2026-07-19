@@ -31,8 +31,12 @@ export default function RegisterPage() {
         setError(result.error);
         return;
       }
-      // Registration successful — redirect to login for email confirmation flow
-      router.push('/login?registered=1');
+      // Registration successful — show confirmation message
+      setError(null);
+      // Redirect after brief success display
+      setTimeout(() => {
+        router.push('/auth/check-email?email=' + encodeURIComponent(email));
+      }, 500);
     } catch {
       setError('Registration failed. Please try again.');
     } finally {
