@@ -29,11 +29,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loadAppUser = async (authUser: SupabaseUser) => {
     // Fetch the app-level User row linked to this auth session
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('User')
       .select('id, email, name, role')
       .eq('auth_user_id', authUser.id)
-      .single();
+      .maybeSingle();
+
+    if (error || !data) {
+      setUser(null);
+      return;
+    }
 
     if (data) {
       setUser({

@@ -10,11 +10,10 @@ import { cookies } from 'next/headers';
 export async function createClient() {
   const cookieStore = await cookies();
 
-  // Use service role on the server so RLS-bypass writes (register, etc.) work.
-  // The service role key is never sent to the browser.
-  const supabaseKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseKey) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY is required for server-side Supabase operations');
+  }
 
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

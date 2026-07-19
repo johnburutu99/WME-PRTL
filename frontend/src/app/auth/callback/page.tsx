@@ -17,9 +17,12 @@ export default function EmailConfirmPage() {
     const handleCallback = async () => {
       try {
         const supabase = createClient();
+        const code = searchParams.get('code');
+        if (code) {
+          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+          if (exchangeError) throw exchangeError;
+        }
 
-        // The email confirmation is automatic via Supabase
-        // Check if user is now authenticated
         const { data: { user }, error: userError } = await supabase.auth.getUser();
 
         if (userError || !user) {
@@ -41,15 +44,25 @@ export default function EmailConfirmPage() {
         setStatus('success');
         setMessage('Email verified successfully!');
 
-        // Get user role from metadata or database
-        const role = user.user_metadata?.role ?? 'BUYER';
+        const { data: appUser, error: profileError } = await supabase
+          .from('User')
+          .select('role')
+          .eq('auth_user_id', user.id)
+          .maybeSingle();
+
+        if (profileError || !appUser || !['BUYER', 'TALENT'].includes(appUser.role)) {
+          setStatus('error');
+          setMessage('Your account does not have a supported portal role.');
+          setTimeout(() => router.push('/login'), 3000);
+          return;
+        }
 
         // Mark user as newly verified so dashboard can show welcome popup
         localStorage.setItem('newlyVerified', 'true');
 
         // Redirect to appropriate dashboard
         setTimeout(() => {
-          if (role === 'TALENT') {
+          if (appUser.role === 'TALENT') {
             router.push('/talent');
           } else {
             router.push('/buyer');
@@ -64,7 +77,7 @@ export default function EmailConfirmPage() {
     };
 
     handleCallback();
-  }, [router]);
+  }, [router, searchParams]);
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center px-4 relative overflow-hidden">

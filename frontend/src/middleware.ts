@@ -10,39 +10,36 @@ export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   const isAuthPage = pathname.startsWith('/login') || pathname.startsWith('/register');
+  const isVerificationPage = pathname.startsWith('/auth/check-email') || pathname.startsWith('/auth/callback');
   const isBuyerPage = pathname.startsWith('/buyer');
   const isTalentPage = pathname.startsWith('/talent');
 
   // Always refresh session — Supabase SSR manages the cookie rotation
-  const { supabaseResponse, user } = await updateSession(req);
+  const { supabaseResponse, user, appRole } = await updateSession(req);
 
   // Not authenticated
   if (!user) {
-    if (!isAuthPage) {
+    if (!isAuthPage && !isVerificationPage) {
       return NextResponse.redirect(new URL('/login', req.url));
     }
     return supabaseResponse;
   }
 
-  // Read role from the custom JWT claim embedded by custom_access_token_hook
-  const jwt = user.app_metadata; // available server-side from getUser()
-  // Role is in user_metadata from our signUp options, and custom claim in JWT
-  // We'll read it from user_metadata as the safe server-side source
-  const role: string = (user.user_metadata?.role as string) ?? '';
+  // The application profile is the authoritative role source. Supabase metadata
+  // is only used for identity and must not grant portal access.
+  const role = appRole ?? '';
 
-  // Authenticated users skip auth pages
   if (isAuthPage) {
     if (role === 'BUYER') return NextResponse.redirect(new URL('/buyer', req.url));
     if (role === 'TALENT') return NextResponse.redirect(new URL('/talent', req.url));
     return supabaseResponse;
   }
 
-  // Role-gated route protection
-  if (isBuyerPage && !['BUYER', 'ADMIN', 'AGENT'].includes(role)) {
-    return NextResponse.redirect(new URL('/login', req.url));
+  if (isBuyerPage && role !== 'BUYER') {
+    return NextResponse.redirect(new URL(role === 'TALENT' ? '/talent' : '/login', req.url));
   }
-  if (isTalentPage && !['TALENT', 'ADMIN', 'AGENT'].includes(role)) {
-    return NextResponse.redirect(new URL('/login', req.url));
+  if (isTalentPage && role !== 'TALENT') {
+    return NextResponse.redirect(new URL(role === 'BUYER' ? '/buyer' : '/login', req.url));
   }
 
   return supabaseResponse;
