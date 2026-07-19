@@ -20,6 +20,19 @@ export type ActionResult<T = void> =
   | { data: T; error: null }
   | { data: null; error: string };
 
+async function getCurrentAppUser(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { data: { user: authUser } } = await supabase.auth.getUser();
+  if (!authUser) return null;
+
+  const { data: appUser } = await supabase
+    .from('User')
+    .select('id, role')
+    .eq('auth_user_id', authUser.id)
+    .maybeSingle();
+
+  return appUser;
+}
+
 // ─── Booking intake form schema (static — no DB round-trip needed) ─────────────
 
 export async function getBookingSchema(): Promise<BookingFormSchema> {
@@ -42,6 +55,10 @@ export async function getBookingSchema(): Promise<BookingFormSchema> {
 
 export async function getTalents(): Promise<ActionResult<Talent[]>> {
   const supabase = await createClient();
+  const appUser = await getCurrentAppUser(supabase);
+  if (!appUser || !['BUYER', 'AGENT', 'ADMIN'].includes(appUser.role)) {
+    return { data: null, error: 'Not authorized' };
+  }
   const { data, error } = await supabase
     .from('User')
     .select('id, name, email')
@@ -56,8 +73,12 @@ export async function getTalents(): Promise<ActionResult<Talent[]>> {
 
 export async function getBookings(): Promise<ActionResult<Booking[]>> {
   const supabase = await createClient();
+  const appUser = await getCurrentAppUser(supabase);
+  if (!appUser || !['BUYER', 'TALENT', 'AGENT', 'ADMIN'].includes(appUser.role)) {
+    return { data: null, error: 'Not authorized' };
+  }
 
-  const { data, error } = await supabase
+  let bookingQuery = supabase
     .from('Booking')
     .select(`
       id, status, eventTitle, eventDate, venueName,
@@ -65,8 +86,12 @@ export async function getBookings(): Promise<ActionResult<Booking[]>> {
       buyer:User!Booking_buyerId_fkey(name, email),
       talent:User!Booking_talentId_fkey(name),
       contracts:Contract(id, contractType, documentUrl, isSigned, signedAt, lockExpiration)
-    `)
-    .order('createdAt', { ascending: false });
+    `);
+
+  if (appUser.role === 'BUYER') bookingQuery = bookingQuery.eq('buyerId', appUser.id);
+  if (appUser.role === 'TALENT') bookingQuery = bookingQuery.eq('talentId', appUser.id);
+
+  const { data, error } = await bookingQuery.order('createdAt', { ascending: false });
 
   if (error) return { data: null, error: error.message };
   return { data: data as unknown as Booking[], error: null };
@@ -85,16 +110,9 @@ export async function createBooking(
   const supabase = await createClient();
 
   // Get the current app user id from our User table
-  const { data: { user: authUser } } = await supabase.auth.getUser();
-  if (!authUser) return { data: null, error: 'Not authenticated' };
-
-  const { data: appUser } = await supabase
-    .from('User')
-    .select('id')
-    .eq('auth_user_id', authUser.id)
-    .single();
-
-  if (!appUser) return { data: null, error: 'User profile not found' };
+  const appUser = await getCurrentAppUser(supabase);
+  if (!appUser) return { data: null, error: 'Not authenticated' };
+  if (appUser.role !== 'BUYER') return { data: null, error: 'Not authorized' };
 
   // Find first available agent
   const { data: agent } = await supabase
@@ -153,15 +171,19 @@ export async function respondToOffer(
   }
 
   const supabase = await createClient();
+  const appUser = await getCurrentAppUser(supabase);
+  if (!appUser) return { data: null, error: 'Not authenticated' };
+  if (appUser.role !== 'TALENT') return { data: null, error: 'Not authorized' };
 
   // Fetch booking to validate status
   const { data: booking, error: fetchError } = await supabase
     .from('Booking')
-    .select('id, status, buyerId')
+    .select('id, status, buyerId, talentId')
     .eq('id', bookingId)
     .single();
 
   if (fetchError || !booking) return { data: null, error: 'Booking not found' };
+  if (booking.talentId !== appUser.id) return { data: null, error: 'Not authorized' };
   if (booking.status !== 'OFFER_PENDING') {
     return { data: null, error: `Cannot respond to a booking in "${booking.status}" status` };
   }
@@ -196,6 +218,16 @@ export async function respondToOffer(
 
 export async function getLedger(): Promise<ActionResult<LedgerEntry[]>> {
   const supabase = await createClient();
+  const appUser = await getCurrentAppUser(supabase);
+  if (!appUser || appUser.role !== 'TALENT') {
+    return { data: null, error: 'Not authorized' };
+  }
+
+  const { data: talentBookings, error: bookingsError } = await supabase
+    .from('Booking')
+    .select('id')
+    .eq('talentId', appUser.id);
+  if (bookingsError) return { data: null, error: bookingsError.message };
 
   const { data, error } = await supabase
     .from('FinancialLedger')
@@ -204,6 +236,7 @@ export async function getLedger(): Promise<ActionResult<LedgerEntry[]>> {
       netPayout, payoutStatus, payoutDate, createdAt,
       booking:Booking(eventTitle, eventDate, venueName)
     `)
+    .in('bookingId', (talentBookings ?? []).map((booking) => booking.id))
     .order('createdAt', { ascending: false });
 
   if (error) return { data: null, error: error.message };

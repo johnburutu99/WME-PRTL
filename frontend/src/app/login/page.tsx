@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/client';
+import { loginAction } from '@/lib/actions/auth.actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,21 +20,13 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const supabase = createClient();
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-
-      if (signInError) {
-        setError('Invalid email or password.');
+      const result = await loginAction({ email, password });
+      if ('error' in result) {
+        setError(result.error);
         return;
       }
 
-      // Read role from user_metadata (set at registration)
-      const role = data.user?.user_metadata?.role ?? 'BUYER';
-      if (role === 'TALENT') {
-        router.push('/talent');
-      } else {
-        router.push('/buyer');
-      }
+      router.push('/');
       router.refresh();
     } catch {
       setError('Unable to sign in. Please try again.');

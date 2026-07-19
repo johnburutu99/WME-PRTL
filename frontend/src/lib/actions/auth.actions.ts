@@ -41,8 +41,10 @@ export async function registerAction(formData: {
     email,
     password,
     options: {
-      // Pass metadata so we can read it in the DB trigger if needed
       data: { name, role },
+      emailRedirectTo: process.env.NEXT_PUBLIC_SITE_URL
+        ? `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`
+        : undefined,
     },
   });
 

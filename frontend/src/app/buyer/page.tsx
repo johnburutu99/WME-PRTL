@@ -2,13 +2,13 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import {
   Calendar, FileText, Lock, DollarSign, Award,
   ShieldAlert, CheckCircle, Menu, X, RefreshCw,
 } from 'lucide-react';
 import { WelcomePopup } from '@/components/WelcomePopup';
+import RoleGuard from '@/components/RoleGuard';
 import {
   getBookings, getTalents, getBookingSchema, createBooking,
 } from '@/lib/actions/bookings.actions';
@@ -36,8 +36,6 @@ interface IntakeFormValues {
 
 export default function BuyerPortal() {
   const { user, loading: authLoading, logout } = useAuth();
-  const router = useRouter();
-
   const [activeTab, setActiveTab] = useState<'intake' | 'contracts' | 'ledger'>('intake');
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [contracts, setContracts] = useState<ContractRecord[]>([]);
@@ -56,13 +54,6 @@ export default function BuyerPortal() {
       usageRights: 'Live promotion and digital branding only.',
     },
   });
-
-  // Redirect if not authenticated or wrong role
-  useEffect(() => {
-    if (!authLoading && (!user || user.role !== 'BUYER')) {
-      router.replace('/login');
-    }
-  }, [user, authLoading, router]);
 
   const loadAllData = useCallback(async () => {
     setFetchError(null);
@@ -181,7 +172,8 @@ export default function BuyerPortal() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row">
+    <RoleGuard allowedRoles={['BUYER']}>
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row">
       <WelcomePopup />
       {/* Mobile Top Navbar */}
       <header className="md:hidden h-16 bg-slate-900 border-b border-slate-800 px-6 flex justify-between items-center z-40 shrink-0">
@@ -396,6 +388,7 @@ export default function BuyerPortal() {
           </>
         )}
       </main>
-    </div>
+      </div>
+    </RoleGuard>
   );
 }
