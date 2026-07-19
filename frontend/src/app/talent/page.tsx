@@ -7,6 +7,7 @@ import {
   Calendar as CalendarIcon, DollarSign, TrendingUp,
   CheckCircle, XCircle, ShieldCheck, Briefcase, Menu, X, RefreshCw,
 } from 'lucide-react';
+import { WelcomePopup } from '@/components/WelcomePopup';
 import { getBookings, getLedger, respondToOffer } from '@/lib/actions/bookings.actions';
 import type { Booking, BookingStatus, LedgerEntry } from '@/types/portal';
 
@@ -95,6 +96,7 @@ export default function TalentPortal() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row">
+      <WelcomePopup />
 
       {/* ── Mobile header ── */}
       <header className="md:hidden h-16 bg-slate-900 border-b border-slate-800 px-6 flex justify-between items-center z-40 shrink-0">
