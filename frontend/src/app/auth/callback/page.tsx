@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { CheckCircle, Loader } from 'lucide-react';
 
+export const dynamic = 'force-dynamic';
+
 export default function EmailConfirmPage() {
   const router = useRouter();
   const searchParams = useSearchParams();

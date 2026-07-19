@@ -11,6 +11,8 @@ import { WelcomePopup } from '@/components/WelcomePopup';
 import { getBookings, getLedger, respondToOffer } from '@/lib/actions/bookings.actions';
 import type { Booking, BookingStatus, LedgerEntry } from '@/types/portal';
 
+export const dynamic = 'force-dynamic';
+
 function getStatusColor(status: BookingStatus) {
   switch (status) {
     case 'CONFIRMED':        return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
