@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { registerAction } from '@/lib/actions/auth.actions';
 
+export const dynamic = 'force-dynamic';
+
 const PUBLIC_ROLES = [
   { value: 'BUYER' as const, label: 'Buyer (B2B Venue / Promoter)' },
   { value: 'TALENT' as const, label: 'Talent (Internal Artist / Musician)' },

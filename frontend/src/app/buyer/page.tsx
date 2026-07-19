@@ -14,6 +14,8 @@ import {
 } from '@/lib/actions/bookings.actions';
 import type { Booking, BookingFormSchema, JsonSchemaField, Talent } from '@/types/portal';
 
+export const dynamic = 'force-dynamic';
+
 interface ContractRecord {
   id: string;
   contractType: string;
