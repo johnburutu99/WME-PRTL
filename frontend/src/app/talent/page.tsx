@@ -2,13 +2,16 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { useRouter } from 'next/navigation';
 import {
   Calendar as CalendarIcon, DollarSign, TrendingUp,
   CheckCircle, XCircle, ShieldCheck, Briefcase, Menu, X, RefreshCw,
 } from 'lucide-react';
+import { WelcomePopup } from '@/components/WelcomePopup';
+import RoleGuard from '@/components/RoleGuard';
 import { getBookings, getLedger, respondToOffer } from '@/lib/actions/bookings.actions';
 import type { Booking, BookingStatus, LedgerEntry } from '@/types/portal';
+
+export const dynamic = 'force-dynamic';
 
 function getStatusColor(status: BookingStatus) {
   switch (status) {
@@ -31,8 +34,6 @@ function fmt(n: number) {
 
 export default function TalentPortal() {
   const { user, loading: authLoading, logout } = useAuth();
-  const router = useRouter();
-
   const [activeTab, setActiveTab]       = useState<'calendar' | 'offer-desk' | 'ledger'>('calendar');
   const [bookings, setBookings]         = useState<Booking[]>([]);
   const [ledgers, setLedgers]           = useState<LedgerEntry[]>([]);
@@ -40,13 +41,6 @@ export default function TalentPortal() {
   const [fetchError, setFetchError]     = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen]   = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-
-  // Auth guard
-  useEffect(() => {
-    if (!authLoading && (!user || user.role !== 'TALENT')) {
-      router.replace('/login');
-    }
-  }, [user, authLoading, router]);
 
   const fetchPortalData = useCallback(async () => {
     setFetchError(null);
@@ -94,7 +88,9 @@ export default function TalentPortal() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row">
+    <RoleGuard allowedRoles={['TALENT']}>
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row">
+      <WelcomePopup />
 
       {/* ── Mobile header ── */}
       <header className="md:hidden h-16 bg-slate-900 border-b border-slate-800 px-6 flex justify-between items-center z-40 shrink-0">
@@ -339,6 +335,7 @@ export default function TalentPortal() {
           </>
         )}
       </main>
-    </div>
+      </div>
+    </RoleGuard>
   );
 }

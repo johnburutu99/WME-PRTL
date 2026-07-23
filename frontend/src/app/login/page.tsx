@@ -3,8 +3,14 @@
 import React, { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+<<<<<<< HEAD
 import { createClient } from '@/lib/supabase/client';
 import { CheckCircle } from 'lucide-react';
+=======
+import { loginAction } from '@/lib/actions/auth.actions';
+
+export const dynamic = 'force-dynamic';
+>>>>>>> 7e9895255cda77ae73651a8bd219885a222727ce
 
 function LoginForm() {
   const router = useRouter();
@@ -22,14 +28,13 @@ function LoginForm() {
     setLoading(true);
 
     try {
-      const supabase = createClient();
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-
-      if (signInError) {
-        setError('Invalid email or password.');
+      const result = await loginAction({ email, password });
+      if ('error' in result) {
+        setError(result.error);
         return;
       }
 
+<<<<<<< HEAD
       // Read role from user_metadata (set at registration)
       const role = data.user?.user_metadata?.role ?? 'BUYER';
       if (role === 'TALENT') {
@@ -39,6 +44,9 @@ function LoginForm() {
       } else {
         router.push('/buyer');
       }
+=======
+      router.push('/');
+>>>>>>> 7e9895255cda77ae73651a8bd219885a222727ce
       router.refresh();
     } catch {
       setError('Unable to sign in. Please try again.');

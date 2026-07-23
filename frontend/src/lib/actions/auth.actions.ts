@@ -50,6 +50,9 @@ export async function registerAction(formData: {
     password,
     options: {
       data: { name, role },
+      emailRedirectTo: process.env.NEXT_PUBLIC_SITE_URL
+        ? `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`
+        : undefined,
     },
   });
 

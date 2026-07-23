@@ -31,6 +31,16 @@ export async function updateSession(request: NextRequest) {
 
   // Refresh session — do NOT remove this, it keeps the JWT alive
   const { data: { user } } = await supabase.auth.getUser();
+  let appRole: string | null = null;
 
-  return { supabaseResponse, user };
+  if (user) {
+    const { data: appUser } = await supabase
+      .from('User')
+      .select('role')
+      .eq('auth_user_id', user.id)
+      .maybeSingle();
+    appRole = appUser?.role ?? null;
+  }
+
+  return { supabaseResponse, user, appRole };
 }
