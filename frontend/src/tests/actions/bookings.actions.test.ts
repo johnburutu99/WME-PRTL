@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // vi.hoisted ensures these are available before vi.mock hoisting runs
 const { mockGetUser, mockFrom, mockFetch } = vi.hoisted(() => ({
@@ -8,10 +8,14 @@ const { mockGetUser, mockFrom, mockFetch } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: vi.fn().mockResolvedValue({
-    auth: { getUser: mockGetUser },
-    from: mockFrom,
-  }),
+  // Wrap in arrow functions so mockFrom/mockGetUser are looked up at call time,
+  // not captured at mock-creation time. This survives beforeEach resets.
+  createClient: vi.fn().mockImplementation(() =>
+    Promise.resolve({
+      auth: { getUser: (...args: unknown[]) => mockGetUser(...args) },
+      from:  (...args: unknown[]) => mockFrom(...args),
+    })
+  ),
 }));
 
 vi.stubGlobal('fetch', mockFetch);
@@ -21,22 +25,67 @@ import {
   createBooking, respondToOffer, getLedger,
 } from '@/lib/actions/bookings.actions';
 
+// Reset call-count only (not implementations) between tests
+afterEach(() => {
+  mockFrom.mockClear();
+  mockGetUser.mockClear();
+  mockFetch.mockClear();
+});
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Build a fluent Supabase query chain stub.
+ * All chainable methods return `chain` itself.
+ * Terminal methods (single, maybeSingle, order, insert, update) resolve to `resolved`.
+ * `in` is chaining-only so that `.in(...).order(...)` keeps working.
+ */
 function makeChain(resolved: unknown) {
-  const chain: Record<string, unknown> = {};
-  ['select','eq','order','limit','insert','update','single'].forEach(m => {
+  const chain: Record<string, ReturnType<typeof vi.fn>> = {};
+  ['select','eq','order','limit','insert','update','single','maybeSingle','in'].forEach(m => {
     chain[m] = vi.fn().mockReturnValue(chain);
   });
-  (chain.single as ReturnType<typeof vi.fn>).mockResolvedValue(resolved);
-  (chain.order  as ReturnType<typeof vi.fn>).mockResolvedValue(resolved);
-  (chain.insert as ReturnType<typeof vi.fn>).mockResolvedValue(resolved);
-  (chain.update as ReturnType<typeof vi.fn>).mockResolvedValue(resolved);
+  chain.single.mockResolvedValue(resolved);
+  chain.maybeSingle.mockResolvedValue(resolved);
+  chain.order.mockResolvedValue(resolved);
+  chain.insert.mockResolvedValue(resolved);
+  chain.update.mockResolvedValue(resolved);
+  // chain.in stays as mockReturnValue(chain) — chaining only
   return chain;
 }
 
-const VALID_TALENT_ID  = '11111111-1111-1111-1111-111111111111';
-const VALID_BOOKING_ID = '22222222-2222-2222-2222-222222222222';
-const VALID_BUYER_ID   = '33333333-3333-3333-3333-333333333333';
-const VALID_AGENT_ID   = '44444444-4444-4444-4444-444444444444';
+/** Stub auth for a user with the given role */
+function stubAuth(role: string, userId = 'stub-user-id', authId = `auth-${userId}`) {
+  mockGetUser.mockResolvedValue({ data: { user: { id: authId } } });
+  return { id: userId, role, authId };
+}
+
+/** Return a from() stub that handles getCurrentAppUser (call 1) then passes through `impl` for subsequent calls */
+function withAppUser(
+  role: string,
+  userId: string,
+  impl: (callN: number) => unknown,
+) {
+  let n = 0;
+  mockFrom.mockImplementation(() => {
+    n++;
+    if (n === 1) {
+      // getCurrentAppUser: User table maybeSingle
+      return {
+        select:      vi.fn().mockReturnThis(),
+        eq:          vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: { id: userId, role }, error: null }),
+      };
+    }
+    return impl(n);
+  });
+}
+
+// ─── RFC-4122 compliant test UUIDs ────────────────────────────────────────────
+const VALID_TALENT_ID  = '1cd38438-db90-4138-8edf-960bb4ce215c';
+const VALID_BOOKING_ID = 'fad32d99-95fa-4cdb-b72d-f8bc4389426e';
+const VALID_BUYER_ID   = '9b1da2e2-aabd-45fc-b802-ccfc7f245af3';
+const VALID_AGENT_ID   = '86ca9e56-ec2e-40d3-8b84-936de7fcdd46';
 
 const VALID_INPUT = {
   talentId: VALID_TALENT_ID, eventTitle: 'Summer Music Fest',
@@ -63,54 +112,58 @@ describe('getBookingSchema', () => {
 
 // ─── getTalents ───────────────────────────────────────────────────────────────
 describe('getTalents', () => {
-  beforeEach(() => vi.clearAllMocks());
   it('returns talent list on success', async () => {
     const talents = [{ id: VALID_TALENT_ID, name: 'DJ Sparkle', email: 'dj@wme.com' }];
-    mockFrom.mockReturnValue(makeChain({ data: talents, error: null }));
+    stubAuth('BUYER', 'buyer-1');
+    withAppUser('BUYER', 'buyer-1', () => makeChain({ data: talents, error: null }));
     const r = await getTalents();
     expect(r.error).toBeNull();
     expect(r.data).toEqual(talents);
   });
   it('returns error on DB failure', async () => {
-    mockFrom.mockReturnValue(makeChain({ data: null, error: { message: 'DB error' } }));
+    stubAuth('BUYER', 'buyer-1');
+    withAppUser('BUYER', 'buyer-1', () => makeChain({ data: null, error: { message: 'DB error' } }));
     const r = await getTalents();
     expect(r.data).toBeNull();
     expect(r.error).toBe('DB error');
   });
   it('filters by TALENT role', async () => {
-    const chain = makeChain({ data: [], error: null });
-    mockFrom.mockReturnValue(chain);
+    stubAuth('BUYER', 'buyer-1');
+    const talentChain = makeChain({ data: [], error: null });
+    withAppUser('BUYER', 'buyer-1', () => talentChain);
     await getTalents();
     expect(mockFrom).toHaveBeenCalledWith('User');
-    expect(chain.eq).toHaveBeenCalledWith('role', 'TALENT');
+    expect(talentChain.eq).toHaveBeenCalledWith('role', 'TALENT');
   });
 });
 
 // ─── getBookings ──────────────────────────────────────────────────────────────
 describe('getBookings', () => {
-  beforeEach(() => vi.clearAllMocks());
   it('returns bookings array', async () => {
     const bookings = [{ id: VALID_BOOKING_ID, status: 'OFFER_PENDING' }];
-    mockFrom.mockReturnValue(makeChain({ data: bookings, error: null }));
+    stubAuth('BUYER', 'buyer-1');
+    withAppUser('BUYER', 'buyer-1', () => makeChain({ data: bookings, error: null }));
     const r = await getBookings();
     expect(r.error).toBeNull();
     expect(r.data).toEqual(bookings);
   });
   it('returns error on failure', async () => {
-    mockFrom.mockReturnValue(makeChain({ data: null, error: { message: 'Timeout' } }));
+    stubAuth('BUYER', 'buyer-1');
+    withAppUser('BUYER', 'buyer-1', () => makeChain({ data: null, error: { message: 'Timeout' } }));
     const r = await getBookings();
     expect(r.data).toBeNull();
     expect(r.error).toBe('Timeout');
   });
   it('orders by createdAt descending', async () => {
-    const chain = makeChain({ data: [], error: null });
-    mockFrom.mockReturnValue(chain);
+    stubAuth('BUYER', 'buyer-1');
+    const bookingsChain = makeChain({ data: [], error: null });
+    withAppUser('BUYER', 'buyer-1', () => bookingsChain);
     await getBookings();
-    expect(chain.order).toHaveBeenCalledWith('createdAt', { ascending: false });
+    expect(bookingsChain.order).toHaveBeenCalledWith('createdAt', { ascending: false });
   });
 });
 
-// ─── createBooking — validation ───────────────────────────────────────────────
+// ─── createBooking — input validation ────────────────────────────────────────
 describe('createBooking — input validation', () => {
   it('rejects non-UUID talentId', async () => {
     const r = await createBooking({ ...VALID_INPUT, talentId: 'not-a-uuid' });
@@ -136,47 +189,51 @@ describe('createBooking — input validation', () => {
 
 // ─── createBooking — auth checks ─────────────────────────────────────────────
 describe('createBooking — auth', () => {
-  beforeEach(() => vi.clearAllMocks());
   it('returns "Not authenticated" with no session', async () => {
     mockGetUser.mockResolvedValueOnce({ data: { user: null } });
-    mockFrom.mockReturnValue(makeChain({ data: null, error: null }));
     const r = await createBooking(VALID_INPUT);
     expect(r.error).toBe('Not authenticated');
   });
-  it('returns "User profile not found" when app row missing', async () => {
+  it('returns "Not authenticated" when app row missing', async () => {
     mockGetUser.mockResolvedValueOnce({ data: { user: { id: 'auth-x' } } });
     mockFrom.mockReturnValue({
-      select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: null, error: null }),
+      select: vi.fn().mockReturnThis(),
+      eq:     vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
     });
     const r = await createBooking(VALID_INPUT);
-    expect(r.error).toBe('User profile not found');
+    expect(r.error).toBe('Not authenticated');
   });
 });
 
 // ─── createBooking — success ──────────────────────────────────────────────────
 describe('createBooking — success', () => {
-  beforeEach(() => vi.clearAllMocks());
   it('creates booking and fires edge function', async () => {
     mockGetUser.mockResolvedValueOnce({ data: { user: { id: 'auth-ok' } } });
     let n = 0;
     mockFrom.mockImplementation(() => {
       n++;
-      if (n === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: VALID_BUYER_ID }, error: null }) };
+      // 1: getCurrentAppUser (BUYER)
+      if (n === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { id: VALID_BUYER_ID, role: 'BUYER' }, error: null }) };
+      // 2: agent lookup
       if (n === 2) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: VALID_AGENT_ID }, error: null }) };
+      // 3: insert booking
       return { insert: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: VALID_BOOKING_ID }, error: null }) };
     });
     const r = await createBooking(VALID_INPUT);
     expect(r.data).toEqual({ id: VALID_BOOKING_ID });
     expect(r.error).toBeNull();
-    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('booking-submitted'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('booking-submitted'),
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
   it('returns DB error when insert fails', async () => {
     mockGetUser.mockResolvedValueOnce({ data: { user: { id: 'auth-ok' } } });
     let n = 0;
     mockFrom.mockImplementation(() => {
       n++;
-      if (n === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: VALID_BUYER_ID }, error: null }) };
+      if (n === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { id: VALID_BUYER_ID, role: 'BUYER' }, error: null }) };
       if (n === 2) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: VALID_AGENT_ID }, error: null }) };
       return { insert: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: null, error: { message: 'unique violation' } }) };
     });
@@ -187,25 +244,38 @@ describe('createBooking — success', () => {
 
 // ─── respondToOffer ───────────────────────────────────────────────────────────
 describe('respondToOffer', () => {
-  beforeEach(() => vi.clearAllMocks());
-  it('errors on empty bookingId', async () => { expect((await respondToOffer('', 'CONFIRMED')).error).toBe('Missing booking ID'); });
+  it('errors on empty bookingId', async () => {
+    expect((await respondToOffer('', 'CONFIRMED')).error).toBe('Missing booking ID');
+  });
   it('errors on invalid action', async () => {
     // @ts-expect-error runtime guard
     expect((await respondToOffer(VALID_BOOKING_ID, 'BAD')).error).toBe('Invalid action');
   });
   it('errors when booking not found', async () => {
-    mockFrom.mockReturnValue({ select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: null, error: { message: 'nf' } }) });
+    stubAuth('TALENT', 'talent-1');
+    withAppUser('TALENT', 'talent-1', () => ({
+      select: vi.fn().mockReturnThis(),
+      eq:     vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: null, error: { message: 'nf' } }),
+    }));
     expect((await respondToOffer(VALID_BOOKING_ID, 'CONFIRMED')).error).toBe('Booking not found');
   });
   it('errors when booking not OFFER_PENDING', async () => {
-    mockFrom.mockReturnValue({ select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: VALID_BOOKING_ID, status: 'CONFIRMED', buyerId: VALID_BUYER_ID }, error: null }) });
+    stubAuth('TALENT', 'talent-1');
+    withAppUser('TALENT', 'talent-1', () => ({
+      select: vi.fn().mockReturnThis(),
+      eq:     vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: { id: VALID_BOOKING_ID, status: 'CONFIRMED', buyerId: VALID_BUYER_ID, talentId: 'talent-1' }, error: null }),
+    }));
     expect((await respondToOffer(VALID_BOOKING_ID, 'CONFIRMED')).error).toContain('Cannot respond');
   });
   it('CONFIRMED sets NDA_PENDING and fires edge function', async () => {
+    stubAuth('TALENT', 'talent-1');
     let n = 0;
     mockFrom.mockImplementation(() => {
       n++;
-      if (n === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: VALID_BOOKING_ID, status: 'OFFER_PENDING', buyerId: VALID_BUYER_ID }, error: null }) };
+      if (n === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'talent-1', role: 'TALENT' }, error: null }) };
+      if (n === 2) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: VALID_BOOKING_ID, status: 'OFFER_PENDING', buyerId: VALID_BUYER_ID, talentId: 'talent-1' }, error: null }) };
       return { update: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ error: null }) };
     });
     const r = await respondToOffer(VALID_BOOKING_ID, 'CONFIRMED');
@@ -213,10 +283,12 @@ describe('respondToOffer', () => {
     expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('offer-approved'), expect.any(Object));
   });
   it('OFFER_REJECTED does NOT fire edge function', async () => {
+    stubAuth('TALENT', 'talent-1');
     let n = 0;
     mockFrom.mockImplementation(() => {
       n++;
-      if (n === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: VALID_BOOKING_ID, status: 'OFFER_PENDING', buyerId: VALID_BUYER_ID }, error: null }) };
+      if (n === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'talent-1', role: 'TALENT' }, error: null }) };
+      if (n === 2) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: VALID_BOOKING_ID, status: 'OFFER_PENDING', buyerId: VALID_BUYER_ID, talentId: 'talent-1' }, error: null }) };
       return { update: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ error: null }) };
     });
     const r = await respondToOffer(VALID_BOOKING_ID, 'OFFER_REJECTED');
@@ -224,10 +296,12 @@ describe('respondToOffer', () => {
     expect(mockFetch).not.toHaveBeenCalledWith(expect.stringContaining('offer-approved'), expect.any(Object));
   });
   it('returns error when update fails', async () => {
+    stubAuth('TALENT', 'talent-1');
     let n = 0;
     mockFrom.mockImplementation(() => {
       n++;
-      if (n === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: VALID_BOOKING_ID, status: 'OFFER_PENDING', buyerId: VALID_BUYER_ID }, error: null }) };
+      if (n === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'talent-1', role: 'TALENT' }, error: null }) };
+      if (n === 2) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: VALID_BOOKING_ID, status: 'OFFER_PENDING', buyerId: VALID_BUYER_ID, talentId: 'talent-1' }, error: null }) };
       return { update: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ error: { message: 'update failed' } }) };
     });
     expect((await respondToOffer(VALID_BOOKING_ID, 'CONFIRMED')).error).toBe('update failed');
@@ -236,16 +310,29 @@ describe('respondToOffer', () => {
 
 // ─── getLedger ────────────────────────────────────────────────────────────────
 describe('getLedger', () => {
-  beforeEach(() => vi.clearAllMocks());
   it('returns entries on success', async () => {
     const ledger = [{ id: 'l1', grossEarnings: 250000, netPayout: 162500, payoutStatus: 'AWAITING_CLEARANCE', createdAt: '2026-07-14T00:00:00Z' }];
-    mockFrom.mockReturnValue(makeChain({ data: ledger, error: null }));
+    stubAuth('TALENT', 'talent-1');
+    let n = 0;
+    mockFrom.mockImplementation(() => {
+      n++;
+      if (n === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'talent-1', role: 'TALENT' }, error: null }) };
+      if (n === 2) return makeChain({ data: [{ id: VALID_BOOKING_ID }], error: null });
+      return makeChain({ data: ledger, error: null });
+    });
     const r = await getLedger();
     expect(r.error).toBeNull();
     expect(r.data).toEqual(ledger);
   });
   it('returns error on failure', async () => {
-    mockFrom.mockReturnValue(makeChain({ data: null, error: { message: 'denied' } }));
+    stubAuth('TALENT', 'talent-1');
+    let n = 0;
+    mockFrom.mockImplementation(() => {
+      n++;
+      if (n === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'talent-1', role: 'TALENT' }, error: null }) };
+      if (n === 2) return makeChain({ data: [{ id: VALID_BOOKING_ID }], error: null });
+      return makeChain({ data: null, error: { message: 'denied' } });
+    });
     const r = await getLedger();
     expect(r.error).toBe('denied');
   });

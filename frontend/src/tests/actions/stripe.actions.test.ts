@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createDepositCheckout } from '@/lib/actions/stripe.actions';
 
-const mockFrom   = vi.fn();
-const mockFetch  = vi.fn();
+const { mockFrom, mockFetch } = vi.hoisted(() => ({
+  mockFrom:  vi.fn(),
+  mockFetch: vi.fn(),
+}));
 
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: vi.fn().mockResolvedValue({ from: mockFrom }),
+  createClient: vi.fn().mockImplementation(() =>
+    Promise.resolve({ from: (...args: unknown[]) => mockFrom(...args) })
+  ),
 }));
 
 vi.stubGlobal('fetch', mockFetch);

@@ -11,20 +11,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { respondToOffer } from '@/lib/actions/bookings.actions';
 import { advanceBookingStatus, signContract } from '@/lib/actions/agent.actions';
 
-const mockFrom    = vi.fn();
-const mockGetUser = vi.fn();
+const { mockFrom, mockGetUser } = vi.hoisted(() => ({
+  mockFrom:    vi.fn(),
+  mockGetUser: vi.fn(),
+}));
+
 vi.stubGlobal('fetch', vi.fn().mockResolvedValue(undefined));
 
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: vi.fn().mockResolvedValue({
-    auth: { getUser: mockGetUser },
-    from: mockFrom,
-  }),
+  createClient: vi.fn().mockImplementation(() =>
+    Promise.resolve({
+      auth: { getUser: (...args: unknown[]) => mockGetUser(...args) },
+      from: (...args: unknown[]) => mockFrom(...args),
+    })
+  ),
 }));
 
 const BOOKING_ID  = 'lifecycle-booking-0000-000000000001';
 const CONTRACT_ID = 'lifecycle-contract-000-000000000001';
 const BUYER_ID    = 'lifecycle-buyer-00000-000000000001';
+const TALENT_ID   = 'lifecycle-talent-0000-000000000001';
+const TALENT_AUTH = 'auth-talent-lifecycle';
 
 describe('Booking Lifecycle — Full State Machine', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -37,10 +44,15 @@ describe('Booking Lifecycle — Full State Machine', () => {
   });
 
   it('Step 2: Talent approves offer → NDA_PENDING + edge function fired', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: TALENT_AUTH } } });
     let call = 0;
     mockFrom.mockImplementation(() => {
       call++;
-      if (call === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: BOOKING_ID, status: 'OFFER_PENDING', buyerId: BUYER_ID }, error: null }) };
+      // call 1: getCurrentAppUser
+      if (call === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { id: TALENT_ID, role: 'TALENT' }, error: null }) };
+      // call 2: fetch booking
+      if (call === 2) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: BOOKING_ID, status: 'OFFER_PENDING', buyerId: BUYER_ID, talentId: TALENT_ID }, error: null }) };
+      // call 3: update booking status
       return { update: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ error: null }) };
     });
     const result = await respondToOffer(BOOKING_ID, 'CONFIRMED');
@@ -104,10 +116,12 @@ describe('Booking Lifecycle — Full State Machine', () => {
 
   it('Alternative: Talent rejects offer → OFFER_REJECTED (no edge function)', async () => {
     vi.clearAllMocks();
+    mockGetUser.mockResolvedValue({ data: { user: { id: TALENT_AUTH } } });
     let call = 0;
     mockFrom.mockImplementation(() => {
       call++;
-      if (call === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: BOOKING_ID, status: 'OFFER_PENDING', buyerId: BUYER_ID }, error: null }) };
+      if (call === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { id: TALENT_ID, role: 'TALENT' }, error: null }) };
+      if (call === 2) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: BOOKING_ID, status: 'OFFER_PENDING', buyerId: BUYER_ID, talentId: TALENT_ID }, error: null }) };
       return { update: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ error: null }) };
     });
     const result = await respondToOffer(BOOKING_ID, 'OFFER_REJECTED');
@@ -116,8 +130,13 @@ describe('Booking Lifecycle — Full State Machine', () => {
   });
 
   it('Guard: cannot respond to a booking that is already CONFIRMED', async () => {
-    const chain = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: BOOKING_ID, status: 'CONFIRMED', buyerId: BUYER_ID }, error: null }) };
-    mockFrom.mockReturnValue(chain);
+    mockGetUser.mockResolvedValue({ data: { user: { id: TALENT_AUTH } } });
+    let call = 0;
+    mockFrom.mockImplementation(() => {
+      call++;
+      if (call === 1) return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { id: TALENT_ID, role: 'TALENT' }, error: null }) };
+      return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: BOOKING_ID, status: 'CONFIRMED', buyerId: BUYER_ID, talentId: TALENT_ID }, error: null }) };
+    });
     const result = await respondToOffer(BOOKING_ID, 'CONFIRMED');
     expect(result.error).toContain('Cannot respond');
   });
