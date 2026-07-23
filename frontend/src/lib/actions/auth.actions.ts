@@ -18,6 +18,14 @@ const LoginSchema = z.object({
   password: z.string().min(1),
 });
 
+const ResetRequestSchema = z.object({
+  email: z.string().email(),
+});
+
+const ResetPasswordSchema = z.object({
+  password: z.string().min(8),
+});
+
 export type AuthActionResult = { error: string } | { success: true };
 
 // ─── Register ─────────────────────────────────────────────────────────────────
@@ -41,7 +49,6 @@ export async function registerAction(formData: {
     email,
     password,
     options: {
-      // Pass metadata so we can read it in the DB trigger if needed
       data: { name, role },
     },
   });
@@ -51,7 +58,6 @@ export async function registerAction(formData: {
   }
 
   // 2. Insert the corresponding app User row linked to the auth user
-  // Uses service_role via server client — bypasses RLS for this write
   const { error: insertError } = await supabase
     .from('User')
     .insert({
@@ -105,4 +111,52 @@ export async function logoutAction(): Promise<void> {
   const supabase = await createClient();
   await supabase.auth.signOut();
   redirect('/login');
+}
+
+// ─── Request password reset email ────────────────────────────────────────────
+
+export async function requestPasswordResetAction(formData: {
+  email: string;
+}): Promise<AuthActionResult> {
+  const parsed = ResetRequestSchema.safeParse(formData);
+  if (!parsed.success) {
+    return { error: 'Please enter a valid email address.' };
+  }
+
+  const supabase = await createClient();
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+
+  const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
+    redirectTo: `${appUrl}/reset-password`,
+  });
+
+  // Always return success to prevent email enumeration
+  if (error) {
+    console.error('[resetPassword] Error sending reset email:', error.message);
+  }
+
+  return { success: true };
+}
+
+// ─── Update password (called from /reset-password after magic link) ──────────
+
+export async function updatePasswordAction(formData: {
+  password: string;
+}): Promise<AuthActionResult> {
+  const parsed = ResetPasswordSchema.safeParse(formData);
+  if (!parsed.success) {
+    return { error: 'Password must be at least 8 characters.' };
+  }
+
+  const supabase = await createClient();
+
+  const { error } = await supabase.auth.updateUser({
+    password: parsed.data.password,
+  });
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  return { success: true };
 }

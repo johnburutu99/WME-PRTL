@@ -1,12 +1,16 @@
 'use client';
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { CheckCircle } from 'lucide-react';
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const registered = searchParams.get('registered') === '1';
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +34,8 @@ export default function LoginPage() {
       const role = data.user?.user_metadata?.role ?? 'BUYER';
       if (role === 'TALENT') {
         router.push('/talent');
+      } else if (role === 'AGENT' || role === 'ADMIN') {
+        router.push('/agent');
       } else {
         router.push('/buyer');
       }
@@ -56,6 +62,13 @@ export default function LoginPage() {
           </p>
         </div>
 
+        {registered && (
+          <div role="status" className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3 rounded-lg text-sm mb-6 flex items-center gap-2">
+            <CheckCircle size={16} />
+            Account created! Sign in to access your portal.
+          </div>
+        )}
+
         {error && (
           <div role="alert" className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm mb-6">
             {error}
@@ -77,9 +90,14 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label htmlFor="password" className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-              Password
-            </label>
+            <div className="flex justify-between items-center mb-2">
+              <label htmlFor="password" className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                Password
+              </label>
+              <Link href="/forgot-password" className="text-xs text-amber-400 hover:underline">
+                Forgot password?
+              </Link>
+            </div>
             <input
               id="password" type="password" value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -104,5 +122,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

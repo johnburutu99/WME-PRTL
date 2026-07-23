@@ -15,6 +15,8 @@ export default function RootIndexPage() {
           router.push('/buyer');
         } else if (user.role === 'TALENT') {
           router.push('/talent');
+        } else if (user.role === 'AGENT' || user.role === 'ADMIN') {
+          router.push('/agent');
         } else {
           router.push('/login');
         }

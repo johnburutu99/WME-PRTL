@@ -11,6 +11,8 @@ import {
 import {
   getBookings, getTalents, getBookingSchema, createBooking,
 } from '@/lib/actions/bookings.actions';
+import { signContract } from '@/lib/actions/agent.actions';
+import { createDepositCheckout } from '@/lib/actions/stripe.actions';
 import type { Booking, BookingFormSchema, JsonSchemaField, Talent } from '@/types/portal';
 
 interface ContractRecord {
@@ -45,6 +47,8 @@ export default function BuyerPortal() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [signingContract, setSigningContract] = useState<string | null>(null);
+  const [depositLoading, setDepositLoading] = useState<string | null>(null);
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<IntakeFormValues>({
     defaultValues: {
@@ -114,6 +118,30 @@ export default function BuyerPortal() {
       if (updated.data) setBookings(updated.data);
     }
     setIsSubmitting(false);
+  };
+
+  const handleSignContract = async (contractId: string) => {
+    setSigningContract(contractId);
+    setFetchError(null);
+    const result = await signContract(contractId);
+    if (result.error) {
+      setFetchError(result.error);
+    } else {
+      await loadAllData();
+    }
+    setSigningContract(null);
+  };
+
+  const handleDepositCheckout = async (bookingId: string) => {
+    setDepositLoading(bookingId);
+    setFetchError(null);
+    const result = await createDepositCheckout(bookingId);
+    if (result.error) {
+      setFetchError(result.error);
+    } else if (result.data?.url) {
+      window.location.href = result.data.url;
+    }
+    setDepositLoading(null);
   };
 
   const renderDynamicField = (key: string, prop: JsonSchemaField) => {
@@ -338,7 +366,12 @@ export default function BuyerPortal() {
                         </div>
                         {c.isSigned
                           ? <a href={c.documentUrl} target="_blank" rel="noopener noreferrer" className="border border-slate-800 hover:bg-slate-800 text-slate-300 font-semibold text-xs uppercase tracking-widest px-4 py-2 rounded-lg transition-all">View Document</a>
-                          : <button className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs uppercase tracking-widest px-4 py-2 rounded-lg transition-all">Sign Envelope</button>
+                          : <button
+                              onClick={() => handleSignContract(c.id)}
+                              disabled={signingContract === c.id}
+                              className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold text-xs uppercase tracking-widest px-4 py-2 rounded-lg transition-all">
+                              {signingContract === c.id ? 'Signing...' : 'Sign Envelope'}
+                            </button>
                         }
                       </div>
                     ))}
@@ -383,7 +416,18 @@ export default function BuyerPortal() {
                           ? `${bookings.filter(b => b.status === 'AWAITING_DEPOSIT').length} deposit(s) awaiting payment`
                           : 'No pending deposit invoices outstanding.'}
                       </div>
-                      <button disabled className="w-full bg-slate-800 border border-slate-700 text-slate-400 font-semibold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-not-allowed">Stripe Secure Checkout</button>
+                      {bookings.filter(b => b.status === 'AWAITING_DEPOSIT').map(b => (
+                        <button
+                          key={b.id}
+                          onClick={() => handleDepositCheckout(b.id)}
+                          disabled={depositLoading === b.id}
+                          className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider transition-all mb-2">
+                          {depositLoading === b.id ? 'Redirecting...' : `Pay 50% Deposit — ${b.eventTitle}`}
+                        </button>
+                      ))}
+                      {bookings.filter(b => b.status === 'AWAITING_DEPOSIT').length === 0 && (
+                        <button disabled className="w-full bg-slate-800 border border-slate-700 text-slate-400 font-semibold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-not-allowed">Stripe Secure Checkout</button>
+                      )}
                     </div>
                   </div>
                 </div>
